@@ -1,0 +1,48 @@
+"use server"
+
+import { ClientResponseError } from "pocketbase"
+import { requireToken } from "@/lib/auth"
+import { isRecordId } from "@/lib/files"
+import { createPocketBase } from "@/lib/pocketbase"
+
+export type NoteResult = { note: string } | { error: string }
+
+export async function saveNote(id: string, note: string): Promise<NoteResult> {
+  const trimmed = note.trim()
+  if (trimmed.length > 5000) {
+    return { error: "Notes can be at most 5000 characters long." }
+  }
+  if (!isRecordId(id)) {
+    return { error: "Unknown sample." }
+  }
+  try {
+    // access rules only allow notes on the user's own samples
+    const record = await createPocketBase(await requireToken())
+      .collection("samples").update(id, { note: trimmed }, { fields: "note" })
+    return { note: record.note }
+  } catch (e) {
+    if (e instanceof ClientResponseError && e.status === 404) {
+      return { error: "This sample no longer exists." }
+    }
+    console.error("saving a note failed", e)
+    return { error: "Saving failed. Try again later." }
+  }
+}
+
+export async function deleteSample(id: string): Promise<{ error?: string }> {
+  if (!isRecordId(id)) {
+    return { error: "Unknown sample." }
+  }
+  try {
+    // access rules only allow deleting the user's own samples
+    await createPocketBase(await requireToken()).collection("samples").delete(id)
+    return {}
+  } catch (e) {
+    // already gone: the result is the same
+    if (e instanceof ClientResponseError && e.status === 404) {
+      return {}
+    }
+    console.error("deleting a sample failed", e)
+    return { error: "Deleting failed. Try again later." }
+  }
+}

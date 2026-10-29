@@ -1,0 +1,9 @@
+# Development: data and migrations live in the working tree, and collection changes made in
+# the dashboard are written as new files to pocketbase/pb_migrations (commit them).
+services:
+  pocketbase:
+    command: ["/pb/pocketbase", "serve", "--http=0.0.0.0:8090", "--dir=/pb/pb_data",
+              "--migrationsDir=/pb/pb_migrations", "--dev"]
+    volumes:
+      - ./pocketbase/pb_data:/pb/pb_data
+      - ./pocketbase/pb_migrations:/pb/pb_migrations

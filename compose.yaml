@@ -1,0 +1,40 @@
+name: tts-ui
+services:
+  pocketbase:
+    build: ./pocketbase
+    image: tts-ui-pocketbase
+    restart: unless-stopped
+    environment:
+      # 32 characters; encrypts settings such as SMTP passwords in the database
+      PB_ENCRYPTION_KEY: ${PB_ENCRYPTION_KEY:-}
+    volumes:
+      - pb-data:/pb/pb_data
+    # only on localhost: a reverse proxy (Caddy) serves it publicly and blocks /_/
+    ports:
+      - "127.0.0.1:${PB_PORT:-8090}:8090"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8090/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  app:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_PB_URL: ${NEXT_PUBLIC_PB_URL:-http://127.0.0.1:8090}
+    image: tts-ui-app
+    restart: unless-stopped
+    environment:
+      PB_URL: http://pocketbase:8090
+      API_URL: ${API_URL:-http://host.docker.internal:8000}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+
+volumes:
+  pb-data:
