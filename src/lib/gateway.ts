@@ -3,7 +3,7 @@ import { ClientResponseError } from "pocketbase"
 import { isTokenValid, tokenUserId } from "@/lib/auth-token"
 import { createPocketBase } from "@/lib/pocketbase"
 import { getToken } from "@/lib/session"
-import type { ModelInfo } from "@/lib/tts"
+import type { Health, ModelInfo } from "@/lib/tts"
 
 // headers of gateway responses that clients need (content type, polling hints, SSE behaviour)
 const PASS_HEADERS = ["content-type", "content-length", "retry-after", "cache-control", "x-accel-buffering"]
@@ -121,6 +121,24 @@ export async function getModels(token: string): Promise<ModelInfo[] | { error: s
   } catch (e) {
     console.error("loading models failed", e)
     return { error: "The TTS service is not reachable." }
+  }
+}
+
+type HealthCheck = { checkedAt: number } & ({ health: Health; latencyMs: number } | { error: string })
+
+/** The gateway's health with the round trip time, or why it could not be read. */
+export async function getHealth(token: string): Promise<HealthCheck> {
+  const start = performance.now()
+  try {
+    const response = await fetchGateway(token, "/health")
+    if (!response.ok) {
+      return { error: `The TTS service answered with ${response.status}.`, checkedAt: Date.now() }
+    }
+    const health: Health = await response.json()
+    return { health, latencyMs: Math.round(performance.now() - start), checkedAt: Date.now() }
+  } catch (e) {
+    console.error("loading health failed", e)
+    return { error: "The TTS service is not reachable.", checkedAt: Date.now() }
   }
 }
 

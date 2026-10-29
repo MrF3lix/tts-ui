@@ -13,6 +13,12 @@ export type ModelInfo = {
   workers: number
 }
 
+// GET /health: live workers per registered model id
+export type Health = {
+  status: string
+  workers: Record<string, number>
+}
+
 export type SampleStatus = "queued" | "running" | "completed" | "failed" | "cancelled"
 
 export type Sample = {

@@ -23,9 +23,17 @@ type Props = {
   onSubmitted: (job: Job, speakerId: string | null) => void
 }
 
+// preselected while it has workers; otherwise the first model that does
+const DEFAULT_MODEL = "xtts"
+
+function defaultModel(models: ModelInfo[]): ModelInfo {
+  const online = models.filter((m) => m.workers > 0)
+  return online.find((m) => m.id === DEFAULT_MODEL) ?? online[0] ?? models.find((m) => m.id === DEFAULT_MODEL) ?? models[0]
+}
+
 export function GenerateForm({ models, speakers, onSubmitted }: Props) {
   const router = useRouter()
-  const [modelId, setModelId] = useState((models.find((m) => m.workers > 0) ?? models[0]).id)
+  const [modelId, setModelId] = useState(defaultModel(models).id)
   const model = models.find((m) => m.id === modelId)!
   const [language, setLanguage] = useState(model.languages[0]?.code ?? "")
   const [speaker, setSpeaker] = useState<WavFile | null>(null)
