@@ -43,9 +43,11 @@ async function SampleTable({ searchParams }: Pick<PageProps<"/saved">, "searchPa
     )
   }
 
-  // dialect names come from the models; codes are shown while the gateway is unreachable
+  // model and dialect names come from the models; ids and codes are shown while the gateway is unreachable
+  const modelList = "error" in models ? [] : models
+  const modelNames = new Map(modelList.map((m) => [m.id, m.name] as const))
   const languageNames = new Map(
-    ("error" in models ? [] : models).flatMap((m) => m.languages.map((l) => [`${m.id}/${l.code}`, l.name] as const)),
+    modelList.flatMap((m) => m.languages.map((l) => [`${m.id}/${l.code}`, l.name] as const)),
   )
 
   return (
@@ -54,6 +56,7 @@ async function SampleTable({ searchParams }: Pick<PageProps<"/saved">, "searchPa
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead>Model</TableHead>
               <TableHead>Dialect</TableHead>
               <TableHead>Text</TableHead>
               <TableHead>Audio</TableHead>
@@ -64,6 +67,7 @@ async function SampleTable({ searchParams }: Pick<PageProps<"/saved">, "searchPa
           <TableBody>
             {items.map((sample) => (
               <TableRow key={sample.id} className="align-top">
+                <TableCell className="pt-3 align-top">{modelNames.get(sample.model) ?? sample.model}</TableCell>
                 <TableCell className="pt-3 align-top">{languageNames.get(`${sample.model}/${sample.language}`) ?? sample.language}</TableCell>
                 <TableCell className="max-w-72 min-w-48 pt-3 align-top whitespace-normal">
                   <ExpandableText text={sample.text} max={MAX_TEXT} />
