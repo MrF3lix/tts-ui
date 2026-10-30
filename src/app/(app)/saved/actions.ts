@@ -4,6 +4,7 @@ import { ClientResponseError } from "pocketbase"
 import { requireToken } from "@/lib/auth"
 import { isRecordId } from "@/lib/files"
 import { createPocketBase } from "@/lib/pocketbase"
+import { type SampleCursor, type SavedSample, listSamples } from "@/lib/samples"
 
 export type NoteResult = { note: string } | { error: string }
 
@@ -44,5 +45,19 @@ export async function deleteSample(id: string): Promise<{ error?: string }> {
     }
     console.error("deleting a sample failed", e)
     return { error: "Deleting failed. Try again later." }
+  }
+}
+
+/** The next page of saved samples, for loading more while scrolling. */
+export async function loadMoreSamples(cursor: SampleCursor): Promise<{ items: SavedSample[]; next: SampleCursor | null } | { error: string }> {
+  if (typeof cursor?.created !== "string" || !/^[\d-]+ [\d:.]+Z$/.test(cursor.created) || typeof cursor.id !== "string" || !isRecordId(cursor.id)) {
+    return { error: "Invalid position." }
+  }
+  try {
+    const { items, next } = await listSamples({ created: cursor.created, id: cursor.id })
+    return { items, next }
+  } catch (e) {
+    console.error("loading samples failed", e)
+    return { error: "Loading more samples failed." }
   }
 }

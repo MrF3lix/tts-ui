@@ -18,7 +18,7 @@ export type SavedSample = {
   speakerName: string | null
 }
 
-export const PAGE_SIZE = 50
+export const PAGE_SIZE = 5
 
 export class KeepError extends Error {
   constructor(message: string, readonly status: number) {
@@ -102,19 +102,34 @@ export async function keptIndices(token: string, userId: string, jobId: string):
   return records.map((r) => r.sample_index)
 }
 
-/** One page of the signed-in user's saved samples, newest first. */
-export async function listSamples(page: number): Promise<{ items: SavedSample[]; totalPages: number }> {
+/** Where the next page of saved samples starts: after this sample (newest first). */
+export type SampleCursor = { created: string; id: string }
+
+/**
+ * The signed-in user's saved samples after `cursor` (from the newest without one), at most
+ * PAGE_SIZE. A cursor instead of page numbers keeps pages stable while samples are saved or
+ * deleted. Only the first page counts the samples, which costs an extra query.
+ */
+export async function listSamples(cursor?: SampleCursor): Promise<{ items: SavedSample[]; total: number | null; next: SampleCursor | null }> {
   const user = await getCurrentUser()
   const pb = createPocketBase(await requireToken())
-  const result = await pb.collection("samples").getList(page, PAGE_SIZE, {
-    filter: pb.filter("owner = {:owner}", { owner: user.id }),
-    sort: "-created",
+  const filter = cursor
+    ? pb.filter("owner = {:owner} && (created < {:created} || (created = {:created} && id < {:id}))", { owner: user.id, ...cursor })
+    : pb.filter("owner = {:owner}", { owner: user.id })
+  // one more than a page, to tell whether there is another one
+  const result = await pb.collection("samples").getList(1, PAGE_SIZE + 1, {
+    filter,
+    sort: "-created,-id",
     fields: "id,text,language,model,seed,duration_s,note,created,expand.speaker.name",
     expand: "speaker",
+    skipTotal: !!cursor,
   })
+  const page = result.items.slice(0, PAGE_SIZE)
+  const last = page.at(-1)
   return {
-    totalPages: result.totalPages,
-    items: result.items.map((r) => ({
+    total: cursor ? null : result.totalItems,
+    next: result.items.length > PAGE_SIZE && last ? { created: last.created, id: last.id } : null,
+    items: page.map((r) => ({
       id: r.id,
       text: r.text,
       language: r.language,
@@ -128,8 +143,11 @@ export async function listSamples(page: number): Promise<{ items: SavedSample[];
   }
 }
 
-// most samples one export can contain; the table shows PAGE_SIZE per page
-export const MAX_EXPORT = 1000
+// most sample ids one export request can list (selected or, with "all", left out)
+export const MAX_EXPORT_IDS = 1000
+
+/** The samples to export: these ones, or all of the user's samples except these. */
+export type ExportSelection = { ids: string[] } | { allExcept: string[] }
 
 const SAMPLE_COLUMNS = [
   "file", "id", "created", "model", "model_name", "language", "language_name", "speaker", "speaker_id",
@@ -154,15 +172,21 @@ function toCsv<C extends string>(columns: readonly C[], rows: Record<C, CsvValue
 }
 
 /**
- * A zip of the user's samples with these ids (others are skipped): the audio under audio/, the
+ * A zip of the selected samples of the user (ids of other or deleted samples are skipped): the audio under audio/, the
  * reference recordings of their speakers under speakers/, and all metadata and notes in
  * metadata.csv/.json and speakers.csv/.json. Audio is streamed from PocketBase one file at a
  * time, so large exports don't have to fit in memory.
  * Returns null if none of the samples exist.
  */
-export async function exportSamples(token: string, userId: string, ids: string[]): Promise<ReadableStream<Uint8Array> | null> {
+export async function exportSamples(token: string, userId: string, selection: ExportSelection): Promise<ReadableStream<Uint8Array> | null> {
   const pb = createPocketBase(token)
   const records: RecordModel[] = []
+  if ("allExcept" in selection) {
+    const excluded = new Set(selection.allExcept)
+    const all = await pb.collection("samples").getFullList({ filter: pb.filter("owner = {:owner}", { owner: userId }), expand: "speaker" })
+    records.push(...all.filter((r) => !excluded.has(r.id)))
+  }
+  const ids = "ids" in selection ? selection.ids : []
   // keeps the filter short; access rules only return the user's own samples anyway
   for (let i = 0; i < ids.length; i += 50) {
     const chunk = ids.slice(i, i + 50)
