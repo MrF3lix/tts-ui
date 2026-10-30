@@ -1,18 +1,21 @@
 "use server"
 
+import { revalidatePath } from "next/cache"
 import { ClientResponseError } from "pocketbase"
 import { type ErrorCounts, ERROR_KEYS, MAX_ERROR_COUNT, normalizeErrors } from "@/lib/annotations"
 import { requireToken } from "@/lib/auth"
 import { isRecordId } from "@/lib/files"
 import { createPocketBase } from "@/lib/pocketbase"
 
-// access rules only allow changes to the user's own samples
+// access rules only allow changes to the user's own samples; the Saved page shows annotations,
+// so its cached copy in the browser is invalidated
 async function updateSample<T>(id: string, data: Record<string, unknown>, fields: string, read: (record: Record<string, unknown>) => T): Promise<T | { error: string }> {
   if (!isRecordId(id)) {
     return { error: "Unknown sample." }
   }
   try {
     const record = await createPocketBase(await requireToken()).collection("samples").update(id, data, { fields })
+    revalidatePath("/saved")
     return read(record)
   } catch (e) {
     if (e instanceof ClientResponseError && e.status === 404) {

@@ -20,6 +20,7 @@ export type SavedSample = {
   speakerName: string | null
   // total of the annotated deviations, null if not annotated
   errorTotal: number | null
+  hasDieth: boolean
 }
 
 export const PAGE_SIZE = 5
@@ -124,7 +125,7 @@ export async function listSamples(cursor?: SampleCursor): Promise<{ items: Saved
   const result = await pb.collection("samples").getList(1, PAGE_SIZE + 1, {
     filter,
     sort: "-created,-id",
-    fields: "id,text,language,model,seed,duration_s,note,errors,created,expand.speaker.name",
+    fields: "id,text,language,model,seed,duration_s,note,errors,dieth,created,expand.speaker.name",
     expand: "speaker",
     skipTotal: !!cursor,
   })
@@ -144,6 +145,7 @@ export async function listSamples(cursor?: SampleCursor): Promise<{ items: Saved
       created: r.created,
       speakerName: r.expand?.speaker?.name ?? null,
       errorTotal: isAnnotated(r.errors) ? totalErrors(normalizeErrors(r.errors)) : null,
+      hasDieth: !!r.dieth,
     })),
   }
 }
@@ -207,6 +209,7 @@ export async function getAnnotatedSample(id: string): Promise<{ sample: Annotate
       sample_index: r.sample_index,
       speakerName: r.expand?.speaker?.name ?? null,
       errorTotal: isAnnotated(r.errors) ? totalErrors(normalizeErrors(r.errors)) : null,
+      hasDieth: !!r.dieth,
       errors: normalizeErrors(r.errors),
       annotated: isAnnotated(r.errors),
       dieth: r.dieth ?? "",

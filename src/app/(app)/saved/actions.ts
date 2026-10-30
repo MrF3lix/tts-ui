@@ -1,10 +1,15 @@
 "use server"
 
+import { revalidatePath } from "next/cache"
 import { ClientResponseError } from "pocketbase"
 import { requireToken } from "@/lib/auth"
 import { isRecordId } from "@/lib/files"
 import { createPocketBase } from "@/lib/pocketbase"
 import { type SampleCursor, type SavedSample, listSamples } from "@/lib/samples"
+
+// Changes made outside the Saved page call revalidatePath("/saved"), so going back to it in the
+// browser doesn't show a cached copy with old notes. Deleting happens on the Saved page, which
+// removes the row itself; revalidating would reload the list and drop pages loaded by scrolling.
 
 export type NoteResult = { note: string } | { error: string }
 
@@ -20,6 +25,7 @@ export async function saveNote(id: string, note: string): Promise<NoteResult> {
     // access rules only allow notes on the user's own samples
     const record = await createPocketBase(await requireToken())
       .collection("samples").update(id, { note: trimmed }, { fields: "note" })
+    revalidatePath("/saved")
     return { note: record.note }
   } catch (e) {
     if (e instanceof ClientResponseError && e.status === 404) {

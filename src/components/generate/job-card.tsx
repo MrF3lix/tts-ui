@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import { BookmarkCheckIcon, BookmarkIcon, DownloadIcon, XIcon } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -165,6 +166,7 @@ function SampleRow({ jobId, sample, speakerId, kept, onKeptChange }: {
   const src = `/api/jobs/${jobId}/samples/${sample.index}`
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const router = useRouter()
 
   async function toggleKeep() {
     setPending(true)
@@ -173,8 +175,13 @@ function SampleRow({ jobId, sample, speakerId, kept, onKeptChange }: {
       const response = await fetch(`${src}/keep`, kept
         ? { method: "DELETE" }
         : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ speaker_id: speakerId }) })
-      if (response.ok) onKeptChange(!kept)
-      else setError(await errorMessage(response))
+      if (response.ok) {
+        onKeptChange(!kept)
+        // the browser may have the Saved page cached (back/forward), without this change
+        router.refresh()
+      } else {
+        setError(await errorMessage(response))
+      }
     } catch {
       setError("Could not reach the server.")
     } finally {

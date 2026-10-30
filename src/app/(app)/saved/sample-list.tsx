@@ -2,16 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import Link from "next/link"
-import { Button } from "@/components/ui/button"
+import { PencilIcon } from "lucide-react"
+import { LocalTime } from "@/components/local-time"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import type { SampleCursor, SavedSample } from "@/lib/samples"
 import { loadMoreSamples } from "./actions"
 import { DeleteSampleButton } from "./delete-sample-button"
-import { ExpandableText } from "./expandable-text"
 import { SelectAllHead, SelectRowCell, useSampleSelection } from "./export-selection"
-import { NoteField } from "./note-field"
-
-const MAX_TEXT = 80
+import { PlayButton } from "./play-button"
 
 type Props = {
   initialItems: SavedSample[]
@@ -32,6 +31,17 @@ export function SampleList({ initialItems, initialNext, initialTotal, modelNames
   const loadingRef = useRef(false)
   const sentinel = useRef<HTMLDivElement>(null)
   const { deselectDeleted } = useSampleSelection(total)
+
+  // Next.js keeps the page mounted (hidden) after navigating away, so this state survives; when
+  // coming back, the server sends the current samples, which replace the ones loaded before
+  const [source, setSource] = useState(initialItems)
+  if (source !== initialItems) {
+    setSource(initialItems)
+    setItems(initialItems)
+    setNext(initialNext)
+    setTotal(initialTotal)
+    setError(null)
+  }
 
   const loadMore = useCallback(async () => {
     if (!next || loadingRef.current) return
@@ -90,37 +100,65 @@ export function SampleList({ initialItems, initialNext, initialTotal, modelNames
           <TableHeader>
             <TableRow>
               <SelectAllHead />
-              <TableHead>Model</TableHead>
-              <TableHead>Dialect</TableHead>
-              <TableHead>Text</TableHead>
-              <TableHead>Audio</TableHead>
-              <TableHead>Notes</TableHead>
-              <TableHead><span className="sr-only">Delete</span></TableHead>
+              <TableHead>Sample</TableHead>
+              <TableHead className="hidden md:table-cell">Generated with</TableHead>
+              <TableHead>Annotation</TableHead>
+              <TableHead className="hidden sm:table-cell">Notes</TableHead>
+              <TableHead className="hidden md:table-cell">Saved</TableHead>
+              <TableHead><span className="sr-only">Actions</span></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {items.map((sample) => (
               <TableRow key={sample.id} className="align-top">
                 <SelectRowCell id={sample.id} />
-                <TableCell className="pt-3 align-top">{modelNames[sample.model] ?? sample.model}</TableCell>
-                <TableCell className="pt-3 align-top">{languageNames[`${sample.model}/${sample.language}`] ?? sample.language}</TableCell>
-                <TableCell className="max-w-72 min-w-48 pt-3 align-top whitespace-normal">
-                  <ExpandableText text={sample.text} max={MAX_TEXT} />
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {sample.speakerName ?? "Unknown speaker"} · seed {sample.seed} · {sample.created.slice(0, 10)}
-                  </p>
-                  <Link href={`/saved/${sample.id}`} className="mt-1 inline-block text-xs underline underline-offset-4 hover:text-foreground/80">
-                    {sample.errorTotal === null ? "Annotate" : `${sample.errorTotal} ${sample.errorTotal === 1 ? "deviation" : "deviations"} · Edit annotation`}
+                <TableCell className="max-w-72 min-w-48 align-top whitespace-normal">
+                  <div className="flex items-start gap-3">
+                    <PlayButton id={sample.id} />
+                    <Link
+                      href={`/saved/${sample.id}`}
+                      title={sample.text}
+                      className="line-clamp-2 hover:underline hover:underline-offset-4"
+                    >
+                      {sample.text}
+                    </Link>
+                  </div>
+                </TableCell>
+                <TableCell className="hidden pt-3 align-top whitespace-normal md:table-cell">
+                  <p className="font-medium">{modelNames[sample.model] ?? sample.model}</p>
+                  <p>{languageNames[`${sample.model}/${sample.language}`] ?? sample.language}</p>
+                  <p className="text-xs text-muted-foreground">{sample.speakerName ?? "Unknown speaker"} · seed {sample.seed}</p>
+                </TableCell>
+                <TableCell className="pt-3 align-top">
+                  <Link href={`/saved/${sample.id}`} className="grid hover:underline hover:underline-offset-4">
+                    {sample.errorTotal === null ? (
+                      <span className="text-muted-foreground">Not annotated</span>
+                    ) : (
+                      <span className="font-medium">{sample.errorTotal} {sample.errorTotal === 1 ? "Abweichung" : "Abweichungen"}</span>
+                    )}
+                    {sample.hasDieth && <span className="text-xs text-muted-foreground">Dieth transcript</span>}
                   </Link>
                 </TableCell>
-                <TableCell className="align-top">
-                  <audio controls preload="none" src={`/api/samples/${sample.id}/audio`} className="h-8 w-64" />
+                <TableCell className="hidden max-w-64 min-w-40 pt-3 align-top whitespace-normal sm:table-cell">
+                  {sample.note
+                    ? <p title={sample.note} className="line-clamp-2 text-muted-foreground">{sample.note}</p>
+                    : <span className="text-muted-foreground/50">—</span>}
+                </TableCell>
+                <TableCell className="hidden pt-3 align-top text-muted-foreground tabular-nums md:table-cell">
+                  <LocalTime value={sample.created} />
                 </TableCell>
                 <TableCell className="align-top">
-                  <NoteField id={sample.id} initial={sample.note} />
-                </TableCell>
-                <TableCell className="align-top">
-                  <DeleteSampleButton id={sample.id} text={sample.text} onDeleted={() => removed(sample.id)} />
+                  <div className="flex items-center gap-1">
+                    <Link
+                      href={`/saved/${sample.id}`}
+                      aria-label="Edit annotation"
+                      title="Edit annotation"
+                      className={buttonVariants({ variant: "ghost", size: "icon-sm" })}
+                    >
+                      <PencilIcon />
+                    </Link>
+                    <DeleteSampleButton id={sample.id} text={sample.text} onDeleted={() => removed(sample.id)} />
+                  </div>
                 </TableCell>
               </TableRow>
             ))}

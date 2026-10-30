@@ -1,8 +1,9 @@
-import { Suspense } from "react"
+import { type ReactNode, Suspense } from "react"
 import type { Metadata } from "next"
 import Link from "next/link"
 import { notFound } from "next/navigation"
 import { ArrowLeftIcon, ChevronLeftIcon, ChevronRightIcon } from "lucide-react"
+import { LocalTime } from "@/components/local-time"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
@@ -42,13 +43,13 @@ async function Annotation({ params }: Pick<PageProps<"/saved/[id]">, "params">) 
   const model = "error" in models ? undefined : models.find((m) => m.id === sample.model)
   const language = model?.languages.find((l) => l.code === sample.language)
 
-  const details: [string, string | number][] = [
+  const details: [string, ReactNode][] = [
     ["Model", model?.name ?? sample.model],
     ["Dialect", language?.name ?? sample.language],
     ["Speaker", sample.speakerName ?? "Unknown speaker"],
     ["Seed", sample.seed],
     ["Duration", `${sample.duration_s.toFixed(1)} s`],
-    ["Saved", sample.created.slice(0, 16)],
+    ["Saved", <LocalTime key="saved" value={sample.created} />],
     ...(sample.checkpoint ? [["Checkpoint", sample.checkpoint] as [string, string]] : []),
   ]
 
