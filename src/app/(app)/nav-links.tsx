@@ -13,14 +13,16 @@ const LINKS = [
 
 export function NavLinks() {
   const pathname = usePathname()
+  // sub-pages such as a sample's annotation belong to their section
+  const isActive = (href: string) => pathname === href || (href !== "/" && pathname.startsWith(`${href}/`))
   return (
     <nav className="flex items-center gap-3 text-sm sm:gap-4">
       {LINKS.map(({ href, label }) => (
         <Link
           key={href}
           href={href}
-          aria-current={pathname === href ? "page" : undefined}
-          className={cn("text-muted-foreground hover:text-foreground", pathname === href && "text-foreground font-medium")}
+          aria-current={isActive(href) ? "page" : undefined}
+          className={cn("text-muted-foreground hover:text-foreground", isActive(href) && "text-foreground font-medium")}
         >
           {label}
         </Link>

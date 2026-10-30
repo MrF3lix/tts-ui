@@ -1,7 +1,9 @@
 import "server-only"
 import { Zip, ZipDeflate, ZipPassThrough } from "fflate"
 import { ClientResponseError, type RecordModel } from "pocketbase"
+import { ERROR_KEYS, type ErrorCounts, isAnnotated, normalizeErrors, totalErrors } from "@/lib/annotations"
 import { getCurrentUser, requireToken } from "@/lib/auth"
+import { isRecordId } from "@/lib/files"
 import { fetchGateway, getModels } from "@/lib/gateway"
 import { createPocketBase } from "@/lib/pocketbase"
 import type { Job } from "@/lib/tts"
@@ -16,6 +18,8 @@ export type SavedSample = {
   note: string
   created: string
   speakerName: string | null
+  // total of the annotated deviations, null if not annotated
+  errorTotal: number | null
 }
 
 export const PAGE_SIZE = 5
@@ -120,7 +124,7 @@ export async function listSamples(cursor?: SampleCursor): Promise<{ items: Saved
   const result = await pb.collection("samples").getList(1, PAGE_SIZE + 1, {
     filter,
     sort: "-created,-id",
-    fields: "id,text,language,model,seed,duration_s,note,created,expand.speaker.name",
+    fields: "id,text,language,model,seed,duration_s,note,errors,created,expand.speaker.name",
     expand: "speaker",
     skipTotal: !!cursor,
   })
@@ -139,7 +143,74 @@ export async function listSamples(cursor?: SampleCursor): Promise<{ items: Saved
       note: r.note,
       created: r.created,
       speakerName: r.expand?.speaker?.name ?? null,
+      errorTotal: isAnnotated(r.errors) ? totalErrors(normalizeErrors(r.errors)) : null,
     })),
+  }
+}
+
+export type AnnotatedSample = SavedSample & {
+  ref_text: string
+  checkpoint: string
+  sample_index: number
+  job_id: string
+  errors: ErrorCounts
+  annotated: boolean
+  dieth: string
+}
+
+/**
+ * One of the signed-in user's saved samples with its annotation, and the ids of the next older
+ * and newer ones (in the order of the Saved page), or null if there is no such sample.
+ */
+export async function getAnnotatedSample(id: string): Promise<{ sample: AnnotatedSample; older: string | null; newer: string | null } | null> {
+  if (!isRecordId(id)) {
+    return null
+  }
+  const user = await getCurrentUser()
+  const pb = createPocketBase(await requireToken())
+  let r: RecordModel
+  try {
+    // access rules only return the user's own samples
+    r = await pb.collection("samples").getOne(id, { expand: "speaker" })
+  } catch (e) {
+    if (e instanceof ClientResponseError && e.status === 404) return null
+    throw e
+  }
+  const neighbour = async (filter: string, sort: string) => {
+    const result = await pb.collection("samples").getList(1, 1, {
+      filter: pb.filter(`owner = {:owner} && (${filter})`, { owner: user.id, created: r.created, id: r.id }),
+      sort,
+      fields: "id",
+      skipTotal: true,
+    })
+    return result.items[0]?.id ?? null
+  }
+  const [older, newer] = await Promise.all([
+    neighbour("created < {:created} || (created = {:created} && id < {:id})", "-created,-id"),
+    neighbour("created > {:created} || (created = {:created} && id > {:id})", "created,id"),
+  ])
+  return {
+    older,
+    newer,
+    sample: {
+      id: r.id,
+      text: r.text,
+      ref_text: r.ref_text,
+      language: r.language,
+      model: r.model,
+      checkpoint: r.checkpoint,
+      seed: r.seed,
+      duration_s: r.duration_s,
+      note: r.note,
+      created: r.created,
+      job_id: r.job_id,
+      sample_index: r.sample_index,
+      speakerName: r.expand?.speaker?.name ?? null,
+      errorTotal: isAnnotated(r.errors) ? totalErrors(normalizeErrors(r.errors)) : null,
+      errors: normalizeErrors(r.errors),
+      annotated: isAnnotated(r.errors),
+      dieth: r.dieth ?? "",
+    },
   }
 }
 
@@ -151,14 +222,17 @@ export type ExportSelection = { ids: string[] } | { allExcept: string[] }
 
 const SAMPLE_COLUMNS = [
   "file", "id", "created", "model", "model_name", "language", "language_name", "speaker", "speaker_id",
-  "speaker_file", "text", "ref_text", "seed", "duration_s", "checkpoint", "rating", "tags", "note", "job_id",
-  "sample_index",
+  "speaker_file", "text", "ref_text", "seed", "duration_s", "checkpoint", "rating", "tags", "note", "dieth",
+  "errors_total", "job_id", "sample_index",
 ] as const
+
+// one column per error category, empty for samples that weren't annotated
+const ERROR_COLUMNS = ERROR_KEYS.map((key) => `errors_${key}` as const)
 
 const SPEAKER_COLUMNS = ["file", "id", "name", "consent", "created"] as const
 
 type CsvValue = string | number | boolean | string[] | null
-type SampleRow = Record<(typeof SAMPLE_COLUMNS)[number], CsvValue>
+type SampleRow = Record<(typeof SAMPLE_COLUMNS)[number] | (typeof ERROR_COLUMNS)[number], CsvValue>
 type SpeakerRow = Record<(typeof SPEAKER_COLUMNS)[number], CsvValue>
 
 function csvField(value: CsvValue): string {
@@ -217,6 +291,8 @@ export async function exportSamples(token: string, userId: string, selection: Ex
 
   const sampleRows: SampleRow[] = records.map((r) => {
     const speaker: RecordModel | undefined = r.expand?.speaker
+    const annotated = isAnnotated(r.errors)
+    const errors = normalizeErrors(r.errors)
     return {
       file: `audio/${r.id}.wav`,
       id: r.id,
@@ -236,8 +312,11 @@ export async function exportSamples(token: string, userId: string, selection: Ex
       rating: r.rating || null,
       tags: Array.isArray(r.tags) ? r.tags : null,
       note: r.note || null,
+      dieth: r.dieth || null,
+      errors_total: annotated ? totalErrors(errors) : null,
       job_id: r.job_id,
       sample_index: r.sample_index,
+      ...Object.fromEntries(ERROR_KEYS.map((key) => [`errors_${key}`, annotated ? errors[key] : null])),
     }
   })
   const speakerRows: SpeakerRow[] = [...speakers.values()].map((s) => ({
@@ -282,7 +361,7 @@ export async function exportSamples(token: string, userId: string, selection: Ex
         file.push(new Uint8Array(0), true)
       }
       try {
-        addText("metadata.csv", toCsv(SAMPLE_COLUMNS, sampleRows))
+        addText("metadata.csv", toCsv([...SAMPLE_COLUMNS, ...ERROR_COLUMNS], sampleRows))
         addText("metadata.json", JSON.stringify(sampleRows, null, 2) + "\n")
         if (speakers.size) {
           addText("speakers.csv", toCsv(SPEAKER_COLUMNS, speakerRows))

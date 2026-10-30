@@ -109,6 +109,9 @@ export function SampleList({ initialItems, initialNext, initialTotal, modelNames
                   <p className="mt-1 text-xs text-muted-foreground">
                     {sample.speakerName ?? "Unknown speaker"} · seed {sample.seed} · {sample.created.slice(0, 10)}
                   </p>
+                  <Link href={`/saved/${sample.id}`} className="mt-1 inline-block text-xs underline underline-offset-4 hover:text-foreground/80">
+                    {sample.errorTotal === null ? "Annotate" : `${sample.errorTotal} ${sample.errorTotal === 1 ? "deviation" : "deviations"} · Edit annotation`}
+                  </Link>
                 </TableCell>
                 <TableCell className="align-top">
                   <audio controls preload="none" src={`/api/samples/${sample.id}/audio`} className="h-8 w-64" />

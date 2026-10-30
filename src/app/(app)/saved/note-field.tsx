@@ -16,11 +16,11 @@ export function NoteField({ id, initial }: { id: string; initial: string }) {
     <div className="grid gap-1">
       <Textarea
         aria-label="Notes"
-        rows={2}
+        rows={3}
         maxLength={5000}
         value={note.value}
         placeholder="Add a note"
-        className="min-h-0 min-w-56 text-sm"
+        className="text-sm"
         onChange={(e) => note.change(e.target.value)}
         onBlur={note.flush}
       />
