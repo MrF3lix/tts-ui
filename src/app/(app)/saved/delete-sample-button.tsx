@@ -9,9 +9,11 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { deleteSample } from "./actions"
+import { useExportSelection } from "./export-selection"
 
 export function DeleteSampleButton({ id, text }: { id: string; text: string }) {
   const router = useRouter()
+  const selection = useExportSelection()
   const [open, setOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
@@ -24,6 +26,7 @@ export function DeleteSampleButton({ id, text }: { id: string; text: string }) {
         return
       }
       setOpen(false)
+      selection?.setSelected((s) => s.delete(id))
       // reload the table (and the page count)
       router.refresh()
     })

@@ -8,6 +8,7 @@ import { getModels } from "@/lib/gateway"
 import { listSamples } from "@/lib/samples"
 import { DeleteSampleButton } from "./delete-sample-button"
 import { ExpandableText } from "./expandable-text"
+import { ExportToolbar, SelectAllHead, SelectRowCell } from "./export-selection"
 import { NoteField } from "./note-field"
 
 export const metadata: Metadata = {
@@ -19,9 +20,12 @@ const MAX_TEXT = 80
 export default function SavedPage({ searchParams }: PageProps<"/saved">) {
   return (
     <div className="grid min-w-0 gap-6">
-      <div className="grid gap-1">
-        <h1 className="text-xl font-semibold">Saved samples</h1>
-        <p className="text-sm text-muted-foreground">Samples you kept on the generate page. They stay until you remove them.</p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="grid gap-1">
+          <h1 className="text-xl font-semibold">Saved samples</h1>
+          <p className="text-sm text-muted-foreground">Samples you kept on the generate page. They stay until you remove them.</p>
+        </div>
+        <ExportToolbar />
       </div>
       <Suspense fallback={<Card className="h-64 animate-pulse" />}>
         <SampleTable searchParams={searchParams} />
@@ -56,6 +60,7 @@ async function SampleTable({ searchParams }: Pick<PageProps<"/saved">, "searchPa
         <Table>
           <TableHeader>
             <TableRow>
+              <SelectAllHead ids={items.map((sample) => sample.id)} />
               <TableHead>Model</TableHead>
               <TableHead>Dialect</TableHead>
               <TableHead>Text</TableHead>
@@ -67,6 +72,7 @@ async function SampleTable({ searchParams }: Pick<PageProps<"/saved">, "searchPa
           <TableBody>
             {items.map((sample) => (
               <TableRow key={sample.id} className="align-top">
+                <SelectRowCell id={sample.id} />
                 <TableCell className="pt-3 align-top">{modelNames.get(sample.model) ?? sample.model}</TableCell>
                 <TableCell className="pt-3 align-top">{languageNames.get(`${sample.model}/${sample.language}`) ?? sample.language}</TableCell>
                 <TableCell className="max-w-72 min-w-48 pt-3 align-top whitespace-normal">

@@ -1,7 +1,8 @@
 import "server-only"
-import { ClientResponseError } from "pocketbase"
+import { Zip, ZipDeflate, ZipPassThrough } from "fflate"
+import { ClientResponseError, type RecordModel } from "pocketbase"
 import { getCurrentUser, requireToken } from "@/lib/auth"
-import { fetchGateway } from "@/lib/gateway"
+import { fetchGateway, getModels } from "@/lib/gateway"
 import { createPocketBase } from "@/lib/pocketbase"
 import type { Job } from "@/lib/tts"
 
@@ -125,4 +126,156 @@ export async function listSamples(page: number): Promise<{ items: SavedSample[];
       speakerName: r.expand?.speaker?.name ?? null,
     })),
   }
+}
+
+// most samples one export can contain; the table shows PAGE_SIZE per page
+export const MAX_EXPORT = 1000
+
+const SAMPLE_COLUMNS = [
+  "file", "id", "created", "model", "model_name", "language", "language_name", "speaker", "speaker_id",
+  "speaker_file", "text", "ref_text", "seed", "duration_s", "checkpoint", "rating", "tags", "note", "job_id",
+  "sample_index",
+] as const
+
+const SPEAKER_COLUMNS = ["file", "id", "name", "consent", "created"] as const
+
+type CsvValue = string | number | boolean | string[] | null
+type SampleRow = Record<(typeof SAMPLE_COLUMNS)[number], CsvValue>
+type SpeakerRow = Record<(typeof SPEAKER_COLUMNS)[number], CsvValue>
+
+function csvField(value: CsvValue): string {
+  const text = Array.isArray(value) ? value.join("; ") : String(value ?? "")
+  return `"${text.replaceAll('"', '""')}"`
+}
+
+// with a byte order mark, so spreadsheet apps read the dialect names as UTF-8
+function toCsv<C extends string>(columns: readonly C[], rows: Record<C, CsvValue>[]): string {
+  return "\uFEFF" + [columns.join(","), ...rows.map((row) => columns.map((c) => csvField(row[c])).join(","))].join("\r\n") + "\r\n"
+}
+
+/**
+ * A zip of the user's samples with these ids (others are skipped): the audio under audio/, the
+ * reference recordings of their speakers under speakers/, and all metadata and notes in
+ * metadata.csv/.json and speakers.csv/.json. Audio is streamed from PocketBase one file at a
+ * time, so large exports don't have to fit in memory.
+ * Returns null if none of the samples exist.
+ */
+export async function exportSamples(token: string, userId: string, ids: string[]): Promise<ReadableStream<Uint8Array> | null> {
+  const pb = createPocketBase(token)
+  const records: RecordModel[] = []
+  // keeps the filter short; access rules only return the user's own samples anyway
+  for (let i = 0; i < ids.length; i += 50) {
+    const chunk = ids.slice(i, i + 50)
+    const idFilter = chunk.map((_, j) => `id = {:id${j}}`).join(" || ")
+    records.push(...await pb.collection("samples").getFullList({
+      filter: pb.filter(`owner = {:owner} && (${idFilter})`, { owner: userId, ...Object.fromEntries(chunk.map((id, j) => [`id${j}`, id])) }),
+      expand: "speaker",
+    }))
+  }
+  if (!records.length) {
+    return null
+  }
+  records.sort((a, b) => b.created.localeCompare(a.created))
+
+  // each speaker once, even if several samples were generated from it
+  const speakers = new Map<string, RecordModel>()
+  for (const r of records) {
+    const speaker: RecordModel | undefined = r.expand?.speaker
+    if (speaker) speakers.set(speaker.id, speaker)
+  }
+  const speakerFile = (speaker: RecordModel) => `speakers/${speaker.id}.wav`
+
+  // model and dialect names, if the gateway is reachable
+  const models = await getModels(token)
+  const modelList = "error" in models ? [] : models
+  const modelNames = new Map(modelList.map((m) => [m.id, m.name] as const))
+  const languageNames = new Map(modelList.flatMap((m) => m.languages.map((l) => [`${m.id}/${l.code}`, l.name] as const)))
+
+  const sampleRows: SampleRow[] = records.map((r) => {
+    const speaker: RecordModel | undefined = r.expand?.speaker
+    return {
+      file: `audio/${r.id}.wav`,
+      id: r.id,
+      created: r.created,
+      model: r.model,
+      model_name: modelNames.get(r.model) ?? null,
+      language: r.language,
+      language_name: languageNames.get(`${r.model}/${r.language}`) ?? null,
+      speaker: speaker?.name ?? null,
+      speaker_id: speaker?.id ?? null,
+      speaker_file: speaker ? speakerFile(speaker) : null,
+      text: r.text,
+      ref_text: r.ref_text || null,
+      seed: r.seed,
+      duration_s: r.duration_s,
+      checkpoint: r.checkpoint || null,
+      rating: r.rating || null,
+      tags: Array.isArray(r.tags) ? r.tags : null,
+      note: r.note || null,
+      job_id: r.job_id,
+      sample_index: r.sample_index,
+    }
+  })
+  const speakerRows: SpeakerRow[] = [...speakers.values()].map((s) => ({
+    file: speakerFile(s),
+    id: s.id,
+    name: s.name || null,
+    consent: s.consent,
+    created: s.created,
+  }))
+
+  // protected files need a short-lived file token
+  const fileToken = await pb.files.getToken()
+
+  return new ReadableStream({
+    async start(controller) {
+      const zip = new Zip((error, chunk, final) => {
+        if (error) {
+          controller.error(error)
+          return
+        }
+        controller.enqueue(chunk)
+        if (final) controller.close()
+      })
+      const addText = (name: string, text: string) => {
+        const file = new ZipDeflate(name, { level: 6 })
+        zip.add(file)
+        file.push(new TextEncoder().encode(text), true)
+      }
+      const addAudio = async (name: string, record: RecordModel) => {
+        const response = await fetch(pb.files.getURL(record, record.audio, { token: fileToken }), { cache: "no-store" })
+        if (!response.ok || !response.body) {
+          throw new Error(`loading ${record.collectionName}/${record.id}/audio failed with ${response.status}`)
+        }
+        // WAV barely compresses, so it is stored as is
+        const file = new ZipPassThrough(name)
+        file.mtime = new Date(record.created)
+        zip.add(file)
+        const reader = response.body.getReader()
+        for (let read = await reader.read(); !read.done; read = await reader.read()) {
+          file.push(read.value)
+        }
+        file.push(new Uint8Array(0), true)
+      }
+      try {
+        addText("metadata.csv", toCsv(SAMPLE_COLUMNS, sampleRows))
+        addText("metadata.json", JSON.stringify(sampleRows, null, 2) + "\n")
+        if (speakers.size) {
+          addText("speakers.csv", toCsv(SPEAKER_COLUMNS, speakerRows))
+          addText("speakers.json", JSON.stringify(speakerRows, null, 2) + "\n")
+        }
+        for (const record of records) {
+          await addAudio(`audio/${record.id}.wav`, record)
+        }
+        for (const speaker of speakers.values()) {
+          await addAudio(speakerFile(speaker), speaker)
+        }
+        zip.end()
+      } catch (e) {
+        console.error("exporting samples failed", e)
+        zip.terminate()
+        controller.error(e)
+      }
+    },
+  })
 }
