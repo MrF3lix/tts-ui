@@ -13,10 +13,12 @@ export type ModelInfo = {
   workers: number
 }
 
-// GET /health: live workers per registered model id
+// GET /health: live workers and queued samples per registered model id
 export type Health = {
   status: string
   workers: Record<string, number>
+  // samples waiting for a worker; missing on gateways older than this field
+  queued?: Record<string, number>
 }
 
 export type SampleStatus = "queued" | "running" | "completed" | "failed" | "cancelled"

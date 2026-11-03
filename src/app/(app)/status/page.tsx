@@ -35,6 +35,8 @@ async function Status() {
   const up = !("error" in result) && result.health.status === "ok"
   const workers = "error" in result ? [] : Object.entries(result.health.workers).sort(([a], [b]) => a.localeCompare(b))
   const total = workers.reduce((sum, [, n]) => sum + n, 0)
+  const queued = "error" in result ? undefined : result.health.queued
+  const totalQueued = Object.values(queued ?? {}).reduce((sum, n) => sum + n, 0)
 
   return (
     <div className="grid gap-4">
@@ -50,7 +52,7 @@ async function Status() {
           {"error" in result
             ? result.error
             : up
-              ? `Gateway and Redis answered in ${result.latencyMs} ms · ${total} ${total === 1 ? "worker" : "workers"} across ${workers.length} ${workers.length === 1 ? "model" : "models"}.`
+              ? `Gateway and Redis answered in ${result.latencyMs} ms · ${total} ${total === 1 ? "worker" : "workers"} across ${workers.length} ${workers.length === 1 ? "model" : "models"}${queued ? ` · ${totalQueued} ${totalQueued === 1 ? "sample" : "samples"} queued` : ""}.`
               : `The gateway reported status "${result.health.status}".`}
         </CardContent>
       </Card>
@@ -67,6 +69,7 @@ async function Status() {
                 <TableRow>
                   <TableHead className="pl-4">Model</TableHead>
                   <TableHead className="text-right">Workers</TableHead>
+                  {queued && <TableHead className="text-right">Queued</TableHead>}
                   <TableHead className="pr-4 text-right">State</TableHead>
                 </TableRow>
               </TableHeader>
@@ -78,6 +81,7 @@ async function Status() {
                       {names.has(id) && <div className="text-xs text-muted-foreground">{id}</div>}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{count}</TableCell>
+                    {queued && <TableCell className="text-right tabular-nums">{queued[id] ?? 0}</TableCell>}
                     <TableCell className="pr-4 text-right">
                       {count > 0
                         ? <Badge variant="secondary">Available</Badge>
